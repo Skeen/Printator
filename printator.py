@@ -54,16 +54,58 @@ parser.add_argument('-d', '--debug', help = "Display debug messages", action = "
 parser.add_argument('-s', '--serial', help = "Simulator serial port")
 parser.add_argument('-n', '--network', help = "Use networking instead of serial communications", action = "store_true")
 parser.add_argument('-h', '--host', help = "Host to bind", default = str(socket_host))
-parser.add_argument('-p', '--port', help = "Port to bind", default = str(socket_port))
+parser.add_argument('-in', '--stdin', help = "Read input via. stdin (pipe)", action = "store_true")
+parser.add_argument('-ig', '--ignore_ok', help = "Hide / ignore 'ok' responses", action = "store_true")
+
 args = parser.parse_args()
 if args.help:
     parser.print_help()
     raise SystemExit
-use_serial = not args.network
+
+if(args.network and args.stdin):
+    print("Cannot use multiple sources!")
+    raise SystemExit
+elif(args.network):
+    print("Using network!")
+elif(args.stdin):
+    print("Using stdin!")
+else:
+    print("Using serial!")
+
+use_serial = not args.network and not args.stdin
+use_network = args.network
+use_stdin = args.stdin
 debug_mode = args.debug
+ignore_ok = args.ignore_ok
 fast_mode = args.fast
 serial_port = args.serial
 speed_factor = max(args.speed, 0.001)
+
+class IgnoreOK():
+    def __init__(self, stream):
+        self.stream = stream
+
+    def flush(self):
+        self.stream.flush();
+
+    def write(self, b):
+        if(b == "ok\n"):
+            return len(b);
+        else:
+            return self.stream.write(b);
+
+    def readline(self, limit=-1):
+        return self.stream.readline(limit);
+
+class STDIO():
+    def flush(self):
+        sys.stdout.flush();
+
+    def write(self, b):
+        return sys.stdout.write(b);
+
+    def readline(self, limit=-1):
+        return sys.stdin.readline(limit);
 
 class MoveUpdater(threading.Thread):
     def __init__(self, parent, gline, totalduration, orig, vec):
@@ -362,13 +404,21 @@ if use_serial:
         time.sleep(0.1)
     sport = serial.Serial(privend, baudrate = serial_baudrate, timeout = com_timeout)
     simulator = PrinterSimulator(pubend, sport, debug = debug_mode)
-else:
+elif use_network:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((socket_host, socket_port))
     sock.settimeout(com_timeout)
     sock.listen(1)
     simulator = PrinterSimulator("%s:%s" % (socket_host, socket_port), None, server = sock, debug = debug_mode)
+elif use_stdin:
+    stream = STDIO();
+    if(ignore_ok):
+        stream = IgnoreOK(stream);
+    simulator = PrinterSimulator("stdin", stream, debug = debug_mode)
+else:
+    print("Invalid configuration!");
+    raise SystemExit
 
 app = wx.App(redirect = False)
 frame = gcview.GcodeViewFrame(None, wx.ID_ANY, '3D printer simulator', size = (400, 400), build_dimensions = build_dimensions)

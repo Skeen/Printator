@@ -1,3 +1,16 @@
+# Changes in this fork
+
+Added two flags, namely '-in / --stdin' which enables reading gcodes from
+stdin, and '-ig / --ignore_ok' which suppresses 'ok' outputs to stdout.
+
+Using these flags enables workflows alike;
+```bash
+cat filename.gcode | python printator.py -in -ig
+```
+Which reads the piped input, line by line and renders it.
+
+# ORIGINAL README BELOW
+
 Printator is a simple 3D printer simulator based on a subpart of Printrun.
 
 At the time of writing this, the simulator in itself fits in 232 lines of
