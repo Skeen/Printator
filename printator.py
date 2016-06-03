@@ -131,11 +131,14 @@ class MoveUpdater(threading.Thread):
 
 class PrinterSimulator(object):
 
-    cur_x = 0
-    cur_y = 0
+    cur_cart_x = 0
+    cur_cart_y = 0
+    cur_bipol_x = 0
+    cur_bipol_y = 0
     cur_z = 0
     cur_e = 0
     cur_f = 100
+    radius = 110
 
     acceleration = 1500.0  # mm/s/s  ASSUMING THE DEFAULT FROM SPRINTER !!!!
     xy_homing_feedrate = 50.
@@ -180,7 +183,7 @@ class PrinterSimulator(object):
             self.process_thread = None
 
     def compute_duration(self, x, y, z, f):
-        currenttravel = math.hypot(x - self.cur_x, y - self.cur_y)
+        currenttravel = math.hypot(x - self.cur_cart_x, y - self.cur_cart_y)
         if currenttravel > 0:
             distance = 2 * abs(((self.cur_f + f) * (f - self.cur_f) * 0.5) / self.acceleration)  # multiply by 2 because we have to accelerate and decelerate
             if distance <= currenttravel and self.cur_f + f != 0 and f != 0:
@@ -219,6 +222,40 @@ class PrinterSimulator(object):
         if self.gline_cb:
             self.gline_cb(gline)
 
+    # Convert polar coordinates
+    # into cartesian coordinates.
+    # All angles are measured in RADIANS
+    def pol2cart(self,theta,r):
+        x = r * math.cos(theta)
+        y = r * math.sin(theta)
+        return x,y
+
+    # Convert a set of bipolar coordinates
+    # into cartesian coordinates.
+    # Whereas polar coordinates are represented by an angle and a distance,
+    # bipolar coordinates are represented by two angles. 
+    def bipol2cart(self,th1,th2):
+        theta = ((math.pi-th2)/2) - th1
+        r = 2 * self.radius * math.sin(th2/2)
+        x,y = self.pol2cart(theta,r)
+        return x,y
+
+    # Convert a set of cartesian coordinates
+    # into polar coordinates
+    def cart2pol(self,x,y):
+        r = math.sqrt(x**2+y**2)
+        theta = math.atan2(y,x)
+        return theta,r
+
+    # Convert a set of cartesian coordinates (X,Y)
+    # into bipolar coordinates (Theta_1,Theta_2) represented by two angles,
+    # the angle of the platter and the angle of the arm.
+    def cart2bipol(self,x,y):
+        theta,r = self.cart2pol(x,y)
+        th1 = math.acos( r / (2*self.radius) ) - theta
+        th2 = 2 * math.asin( r / (2*self.radius) )
+        return th1,th2
+
     def process_gline(self, gline):
         if not gline.command.startswith("G"):  # unbuffered
             return self.process_gline_nong(gline)
@@ -227,20 +264,25 @@ class PrinterSimulator(object):
         line_duration = 0
         timer = None
         if gline.is_move:
-            new_x = self.cur_x
-            new_y = self.cur_y
+            new_bipol_x = self.cur_bipol_x
+            new_bipol_y = self.cur_bipol_y
             new_z = self.cur_z
             new_e = self.cur_e
             new_f = self.cur_f
             if gline.relative:
-                if gline.x is not None: new_x += gline.x
-                if gline.y is not None: new_y += gline.y
+                if gline.x is not None: new_bipol_x += gline.x
+                if gline.y is not None: new_bipol_y += gline.y
                 if gline.z is not None: new_z += gline.z
             else:
-                if gline.x is not None: new_x = gline.x
-                if gline.y is not None: new_y = gline.y
+                if gline.x is not None: new_bipol_x = gline.x
+                if gline.y is not None: new_bipol_y = gline.y
                 if gline.z is not None: new_z = gline.z
 
+            # Get cartesian values from bipolar ones
+            new_cart_x, new_cart_y = self.bipol2cart(new_bipol_x/((float(200)/360)*100), new_bipol_y/((float(200)/360)*100));
+            #new_cart_x = new_bipol_x;
+            #new_cart_y = new_bipol_y;
+            
             if gline.e is not None:
                 if gline.relative_e:
                     new_e += gline.e
@@ -249,15 +291,17 @@ class PrinterSimulator(object):
 
             if gline.f is not None: new_f = gline.f / 60.0
 
-            line_duration = self.compute_duration(new_x, new_y, new_z, new_f)
+            line_duration = self.compute_duration(new_cart_x, new_cart_y, new_z, new_f)
 
             if not fast_mode and line_duration > 0.5:
-                vec = (new_x - self.cur_x, new_y - self.cur_y, new_z - self.cur_z)
-                timer = MoveUpdater(self, gline, line_duration, (self.cur_x, self.cur_y, self.cur_z), vec)
+                vec = (new_cart_x - self.cur_cart_x, new_cart_y - self.cur_cart_y, new_z - self.cur_z)
+                timer = MoveUpdater(self, gline, line_duration, (self.cur_cart_x, self.cur_cart_y, self.cur_z), vec)
             else:
-                wx.CallAfter(self.add_glmove, gline, self.cur_x, self.cur_y, self.cur_z, new_x, new_y, new_z)
-            self.cur_x = new_x
-            self.cur_y = new_y
+                wx.CallAfter(self.add_glmove, gline, self.cur_cart_x, self.cur_cart_y, self.cur_z, new_cart_x, new_cart_y, new_z)
+            self.cur_cart_x = new_cart_x
+            self.cur_cart_y = new_cart_y
+            self.cur_bipol_x = new_bipol_x
+            self.cur_bipol_y = new_bipol_y
             self.cur_z = new_z
             self.cur_e = new_e
             self.cur_f = new_f
